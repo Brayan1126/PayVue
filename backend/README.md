@@ -1,248 +1,182 @@
-# PayVue Backend - Go Microservices
+# PayVue Backend
 
-Backend en Go para gestión financiera personal, migrado desde Python Flask siguiendo la arquitectura de microservicios.
+API REST en Go para PayVue. Expone autenticación y CRUD de ingresos, deudas y pagos sobre una base de datos SQLite.
 
-## 🚀 Inicio Rápido con Docker (Recomendado)
+- **Router:** [chi v5](https://github.com/go-chi/chi), con CORS abierto (`*`)
+- **Base de datos:** SQLite vía `mattn/go-sqlite3` (requiere CGO y un compilador de C)
+- **Validación:** go-playground/validator
+- **Contraseñas:** bcrypt
 
-### Prerequisitos
-- Docker
-- Docker Compose
-
-### Levantar todos los servicios
-
-```bash
-docker-compose up -d
-```
-
-¡Eso es todo! Los servicios estarán disponibles en:
-- **Reader (GET)**: http://localhost:8080
-- **Writer (POST/PUT/DELETE)**: http://localhost:8081
-
-### Comandos útiles
-
-```bash
-# Ver logs
-docker compose logs -f
-
-# Ver logs de un servicio específico
-docker compose logs -f reader
-docker compose logs -f writer
-
-# Detener servicios
-docker compose down
-
-# Reconstruir imágenes
-docker compose up -d --build
-
-# Ver estado de servicios
-docker compose ps
-```
+> **Nota:** el servidor que se usa hoy es **`cmd/server`**, un único proceso en el puerto 8080 que atiende lecturas y escrituras. Es el que compila el `Dockerfile`. Las carpetas `cmd/reader`, `cmd/writer`, `cmd/app` y `pkg/rest/reader|writer` son de la versión anterior separada en dos servicios (puertos 8080 y 8081) y **no se usan**. Ver [Código heredado](#código-heredado).
 
 ---
 
-## 🏗️ Arquitectura
+## Ejecutar
 
-### Servicios
+### Con Docker (desde la raíz del repo)
 
-```
-┌─────────────────────────────────────────────┐
-│           PayVue Backend                     │
-├─────────────────────────────────────────────┤
-│                                              │
-│  ┌──────────────┐      ┌──────────────┐    │
-│  │   Reader     │      │   Writer     │    │
-│  │  (Port 8080) │      │ (Port 8081)  │    │
-│  │              │      │              │    │
-│  │  GET /api/*  │      │ POST /api/*  │    │
-│  │              │      │ PUT /api/*   │    │
-│  │              │      │ DELETE /api/*│    │
-│  └──────┬───────┘      └──────┬───────┘    │
-│         │                     │             │
-│         └──────────┬──────────┘             │
-│                    │                        │
-│              ┌─────▼─────┐                  │
-│              │  SQLite   │                  │
-│              │ Database  │                  │
-│              └───────────┘                  │
-└─────────────────────────────────────────────┘
+```bash
+docker compose up -d --build api
+curl http://localhost:8080/health    # → OK - PayVue API Server
 ```
 
-### Módulos Implementados
+Volúmenes montados:
 
-- **Auth**: Registro y login de usuarios
-- **Debts**: Gestión de deudas
-- **Incomes**: Gestión de ingresos
-- **Payments**: Gestión de pagos con subida de recibos
+| Ruta en el host | Ruta en el contenedor | Contenido |
+|-----------------|-----------------------|-----------|
+| `backend/data/` | `/app/data` | `payvue.db` |
+| `backend/uploads/` | `/app/uploads` | Recibos subidos |
+
+### Sin Docker
+
+Requiere **Go 1.21+** y **GCC** (en Windows: MinGW o WinLibs en el `PATH`).
+
+```bash
+cd backend
+cp env.example .env        # opcional
+CGO_ENABLED=1 go run ./cmd/server
+```
+
+Al arrancar, las tablas se crean automáticamente (`users`, `debts`, `incomes`, `payments`). La carpeta `./uploads` también se crea si no existe.
+
+> El `Makefile` solo tiene targets de los servicios heredados (`run-reader` / `run-writer`). Para el servidor actual usa `go run ./cmd/server`.
+
+### Variables de entorno
+
+Se leen de `.env` (si existe) o del entorno del sistema.
+
+| Variable | Descripción | Por defecto |
+|----------|-------------|-------------|
+| `PORT` | Puerto HTTP | `8080` |
+| `DATABASE_PATH` | Ruta del archivo SQLite | `./payvue.db` |
+| `ENVIRONMENT` | Nombre del entorno (solo se registra en el log) | `development` |
 
 ---
 
-## 📡 APIs Disponibles
+## API
 
-### Reader (GET - Puerto 8080)
+Base URL: `http://localhost:8080`. Las rutas **no** tienen prefijo `/api/v1`.
+
+### Identificación del usuario
+
+No hay tokens. Las rutas de finanzas identifican al usuario con el header **`X-User-ID: <id>`**, o con el query param `?user_id=<id>` como alternativa. El `user_id` lo devuelven el registro y el login.
+
+- **`GET` de listas:** con el header filtra por usuario; **sin él devuelve los registros de todos los usuarios**.
+- **`POST`:** asigna el registro al usuario del header.
+- **`PUT` / `DELETE` por `{id}`:** no verifican que el registro pertenezca al usuario.
+
+### Endpoints
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| GET | `/health` | Health check |
+| POST | `/auth/register` | Crear usuario |
+| POST | `/auth/login` | Iniciar sesión |
+| POST | `/auth/logout` | Solo devuelve un mensaje (no hay sesión que cerrar) |
+| GET | `/finances/income` | Listar ingresos |
+| GET | `/finances/income/{id}` | Obtener un ingreso |
+| POST | `/finances/income` | Crear ingreso |
+| PUT | `/finances/income/{id}` | Actualizar ingreso |
+| DELETE | `/finances/income/{id}` | Eliminar ingreso |
+| GET | `/finances/debt` | Listar deudas |
+| GET | `/finances/debt/{id}` | Obtener una deuda |
+| POST | `/finances/debt` | Crear deuda |
+| PUT | `/finances/debt/{id}` | Actualizar deuda |
+| DELETE | `/finances/debt/{id}` | Eliminar deuda |
+| GET | `/finances/payment` | Listar pagos |
+| POST | `/finances/payment` | Crear pago (multipart, con recibo opcional) |
+| DELETE | `/finances/payment/{id}` | Eliminar pago |
+| GET | `/finances/payment/receipt/{filename}` | Descargar un recibo |
+
+Las listas se devuelven como un **array JSON** (no envuelto en un objeto). Los errores tienen la forma `{"error": "...", "message": "..."}`.
+
+### Ejemplos
 
 ```bash
-# Health check
-curl http://localhost:8080/health
-
-# Debts
-curl http://localhost:8080/api/v1/debts
-curl http://localhost:8080/api/v1/debts/{id}
-
-# Incomes
-curl http://localhost:8080/api/v1/incomes
-curl http://localhost:8080/api/v1/incomes/{id}
-
-# Payments
-curl http://localhost:8080/api/v1/payments
-curl http://localhost:8080/api/v1/payments/{id}/receipt
-```
-
-### Writer (POST/PUT/DELETE - Puerto 8081)
-
-```bash
-# Registro
-curl -X POST http://localhost:8081/api/v1/auth/register \
+# Registro (password mínimo 6 caracteres)
+curl -X POST http://localhost:8080/auth/register \
   -H "Content-Type: application/json" \
-  -d '{"email":"user@example.com","password":"securepass"}'
+  -d '{"email":"user@example.com","password":"secreto123"}'
+# → 201 {"message":"Usuario registrado exitosamente","user_id":1, ...}
 
 # Login
-curl -X POST http://localhost:8081/api/v1/auth/login \
+curl -X POST http://localhost:8080/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"email":"user@example.com","password":"securepass"}'
+  -d '{"email":"user@example.com","password":"secreto123"}'
+# → 200 {"message":"Inicio de sesión exitoso","user_id":1, ...}
 
-# Crear Deuda
-curl -X POST http://localhost:8081/api/v1/debts \
-  -H "Content-Type: application/json" \
+# Crear ingreso
+curl -X POST http://localhost:8080/finances/income \
+  -H "Content-Type: application/json" -H "X-User-ID: 1" \
+  -d '{"amount":3500000,"source":"Salario","date":"2026-11-01"}'
+
+# Crear deuda
+curl -X POST http://localhost:8080/finances/debt \
+  -H "Content-Type: application/json" -H "X-User-ID: 1" \
   -d '{
-    "creditor": "Banco Nacional",
-    "amount": 5000.00,
-    "interest_rate": 12.5,
-    "due_date": "2025-12-31",
-    "description": "Préstamo personal"
+    "name": "Tarjeta Visa",
+    "total_amount": 2400000,
+    "remaining_amount": 1600000,
+    "due_date": "2027-05-15",
+    "interest_rate": 2.1,
+    "num_installments": 12,
+    "installment_amount": 200000,
+    "payment_day": 15
   }'
 
-# Crear Ingreso
-curl -X POST http://localhost:8081/api/v1/incomes \
-  -H "Content-Type: application/json" \
-  -d '{
-    "source": "Salario",
-    "amount": 3000.00,
-    "date": "2025-10-01",
-    "is_recurring": true
-  }'
-
-# Crear Pago (con archivo)
-curl -X POST http://localhost:8081/api/v1/payments \
-  -F "debt_id=1" \
-  -F "amount=500.00" \
-  -F "payment_date=2025-10-20" \
+# Crear pago con recibo (campos de formulario: amount, debt_id, date, receipt)
+curl -X POST http://localhost:8080/finances/payment \
+  -H "X-User-ID: 1" \
+  -F "amount=200000" -F "debt_id=1" -F "date=2026-11-07" \
   -F "receipt=@recibo.pdf"
+
+# Listar pagos del usuario (cada uno incluye debt_name, remaining_amount y receipt_url)
+curl http://localhost:8080/finances/payment -H "X-User-ID: 1"
 ```
+
+### Campos
+
+**Ingreso**: `amount` (> 0), `source`, `date`. Los tres son obligatorios.
+
+**Deuda**: `name`, `total_amount` (> 0), `remaining_amount` (≥ 0), `due_date`, `num_installments` (> 0), `installment_amount` (> 0) y `payment_day` (1-31) son obligatorios; `interest_rate` (≥ 0) es opcional. En el `PUT` también se envía `paid` (bool). La respuesta añade `remaining_payments`.
+
+**Pago** (multipart): `amount` (> 0), `debt_id` (> 0), `date` y `receipt` (archivo opcional, máximo 10 MB). El recibo se guarda en `./uploads` y la respuesta incluye `receipt_url` (`/finances/payment/receipt/<archivo>`).
 
 ---
 
-## 🛠️ Desarrollo Sin Docker
-
-### Prerequisitos
-- Go 1.21+
-- GCC (para SQLite)
-- Make (opcional)
-
-### Configuración
-
-1. Copiar archivo de configuración:
-```bash
-cp env.example .env
-```
-
-2. Editar `.env` según necesites:
-```env
-PORT=8080
-DATABASE_PATH=./payvue.db
-ENV=development
-CGO_ENABLED=1
-```
-
-### Ejecutar con Make
-
-```bash
-# Reader
-make run-reader
-
-# Writer
-make run-writer
-```
-
-### Ejecutar con go run
-
-```bash
-# Reader
-CGO_ENABLED=1 go run cmd/reader/main.go
-
-# Writer
-CGO_ENABLED=1 PORT=8081 go run cmd/writer/main.go
-```
-
----
-
-## 🔧 Configuración Avanzada
-
-### Variables de Entorno
-
-| Variable | Descripción | Default |
-|----------|-------------|---------|
-| `SCOPE` | Servicio a ejecutar (reader/writer) | reader |
-| `PORT` | Puerto del servidor | 8080 |
-| `DATABASE_PATH` | Ruta a la base de datos SQLite | ./payvue.db |
-| `ENV` | Entorno (development/production) | development |
-| `CGO_ENABLED` | Habilitar CGO para SQLite | 1 |
-
-### Volúmenes Docker
-
-- `./data`: Base de datos SQLite persistente
-- `./uploads`: Archivos de recibos de pagos
-
----
-
-## 📂 Estructura del Proyecto
+## Estructura
 
 ```
-payvue_proyecto_software/
+backend/
 ├── cmd/
-│   ├── app/          # Configuración y container principal
-│   ├── reader/       # Servicio de lectura (GET)
-│   └── writer/       # Servicio de escritura (POST/PUT/DELETE)
+│   ├── server/main.go        # ★ Servidor actual: rutas + handlers HTTP
+│   ├── app/config/           # Carga de .env / variables de entorno
+│   ├── app/container/        # Inyección de dependencias (DB → repos → servicios)
+│   ├── app/main.go           # (heredado) proxy por SCOPE
+│   ├── reader/  writer/      # (heredado) servicios separados
 ├── pkg/
-│   ├── domain/       # Lógica de negocio
-│   │   ├── debt/
-│   │   ├── income/
-│   │   ├── payment/
-│   │   └── user/
-│   ├── repository/   # Capa de datos
-│   │   ├── debt/
-│   │   ├── income/
-│   │   ├── payment/
-│   │   ├── user/
-│   │   └── database/
-│   ├── rest/         # Capa HTTP
-│   │   ├── entities/ # DTOs
-│   │   ├── reader/   # Handlers GET
-│   │   └── writer/   # Handlers POST/PUT/DELETE
-│   └── utils/        # Utilidades
-├── docker-compose.yml
-├── Dockerfile
-└── .env
+│   ├── domain/               # Entidades, servicios y mappers por módulo
+│   │   ├── user/  income/  debt/  payment/
+│   ├── repository/           # Acceso a SQLite por módulo
+│   │   ├── database/         # Conexión y creación de tablas
+│   │   └── user/  income/  debt/  payment/
+│   ├── rest/
+│   │   ├── entities/         # DTOs de request (usados por cmd/server)
+│   │   └── reader/  writer/  # (heredado) handlers de los servicios separados
+│   └── utils/fileupload/     # Guardado de recibos en ./uploads
+├── data/                     # BD usada por Docker (volumen)
+├── docs/                     # Documentación académica
+├── Dockerfile                # Compila cmd/server
+├── Makefile                  # Targets de los servicios heredados
+└── env.example
 ```
 
----
+Flujo de una petición: `cmd/server` (handler) → `pkg/domain/<módulo>` (servicio) → `pkg/repository/<módulo>` → SQLite.
 
-## 🧪 Testing
+## Código heredado
 
-```bash
-# Probar Reader
-curl http://localhost:8080/health
+La primera versión separaba el backend en un servicio **reader** (GET, puerto 8080) y uno **writer** (POST/PUT/DELETE, puerto 8081), lanzados por `cmd/app` según la variable `SCOPE`. Después se unificó todo en `cmd/server`. El código anterior sigue en el repositorio pero no lo usan ni Docker ni el frontend, y sus rutas (`/api/v1/...`) no coinciden con las actuales.
 
-# Probar Writer
-curl http://localhost:8081/health
-```
+## Documentación
 
+En [docs/](docs/): [Arquitectura](docs/ARQUITECTURA.md) · [Patrones de diseño](docs/PATRONES_DISENO.md) · [Principios SOLID](docs/PRINCIPIOS_SOLID.md) · [Pruebas](docs/PRUEBAS_SOFTWARE.md) · [Despliegue](docs/DESPLIEGUE.md)

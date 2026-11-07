@@ -1,83 +1,101 @@
-# Frontend PayVue
+# PayVue Frontend
 
-## Descripción
+Interfaz web de PayVue en **React 19** (Create React App). Consume la API de [backend/](../backend/) para gestionar ingresos, deudas y pagos.
 
-Este es el frontend de PayVue, una aplicación web para la gestión de finanzas personales, desarrollada en React. Permite registrar ingresos, deudas, pagos y visualizar reportes y estadísticas de manera sencilla.
-
----
-
-## Estructura del proyecto
-
-- **src/**
-  - **components/**: Componentes reutilizables (Sidebar, FinanceForm, etc).
-  - **pages/**: Vistas principales (Dashboard, Records, PaymentHistory, Login, Register).
-  - **utils/**: Utilidades como alertas personalizadas.
-  - **App.js**: Configuración de rutas principales.
-  - **index.js**: Punto de entrada de la aplicación.
+**Librerías principales:** react-router-dom 7 · axios · Chart.js + react-chartjs-2 · Bootstrap 5 + bootstrap-icons · MUI · SweetAlert2
 
 ---
 
-## Scripts disponibles
+## Ejecutar
 
-En la carpeta del frontend puedes ejecutar:
+Requiere Node 18+.
 
-- `npm start`  
-  Inicia la app en modo desarrollo.  
-  Abre [http://localhost:3000](http://localhost:3000) en tu navegador.
+```bash
+cd frontend
+npm install
+npm start          # http://localhost:3000
+```
 
-- `npm run build`  
-  Genera una versión optimizada para producción en la carpeta `build`.
+La app llama a la API en `REACT_APP_API_URL`; si no está definida, usa `http://localhost:8080`.
 
-- `npm test`  
-  Ejecuta los tests de React (si tienes tests implementados).
+### Modo mock (sin backend)
 
----
+Para ver la app sin levantar la API (por ejemplo, para tomar capturas), crea `frontend/.env.local`:
 
-## Dependencias principales
+```env
+REACT_APP_MOCK_API=true
+```
 
-- **React**: Librería principal para la interfaz.
-- **axios**: Para llamadas HTTP a la API backend.
-- **react-router-dom**: Navegación entre páginas.
-- **bootstrap** y **bootstrap-icons**: Estilos y componentes visuales.
-- **chart.js** y **react-chartjs-2**: Gráficas y reportes.
-- **sweetalert2**: Alertas y confirmaciones visuales.
+y reinicia `npm start`. En este modo:
 
----
+- El login y el registro aceptan cualquier email y contraseña.
+- El dashboard y el historial cargan datos de ejemplo (ingresos, 3 deudas y algunos pagos).
+- Crear, editar y eliminar funcionan en memoria; los cambios **se pierden al recargar** la página.
+- "Ver recibo" no muestra imagen, porque los pagos de ejemplo no tienen archivo.
 
-## Configuración y uso
+El mock está en [src/config/mockApi.js](src/config/mockApi.js) y se activa desde [src/config/api.js](src/config/api.js). Para volver a la API real, borra `.env.local` o pon la variable en `false`. Git ignora `.env.local`.
 
-1. Instala las dependencias:
-   ```
-   npm install
-   ```
+### Variables de entorno
 
-2. Inicia el servidor de desarrollo:
-   ```
-   npm start
-   ```
+| Variable | Descripción | Por defecto |
+|----------|-------------|-------------|
+| `REACT_APP_API_URL` | URL base de la API | `http://localhost:8080` |
+| `REACT_APP_MOCK_API` | `true` usa datos falsos en lugar de la API | sin definir (API real) |
 
-3. Asegúrate de que el backend esté corriendo en [http://localhost:8000](http://localhost:8000) para que la app funcione correctamente.
+Son variables de CRA: se fijan **al compilar**, así que hay que reiniciar `npm start` o volver a hacer el build después de cambiarlas.
 
 ---
 
-## Personalización
+## Pantallas
 
-- Puedes modificar los estilos en `src/index.css` o en los archivos CSS de cada componente.
-- Las rutas principales están definidas en `src/App.js`.
-- Las alertas personalizadas están en `src/utils/alert.js`.
+| Ruta | Página | Descripción |
+|------|--------|-------------|
+| `/` | `Login` | Inicio de sesión |
+| `/register` | `Register` | Crear cuenta |
+| `/forgot-password` | `ForgotPassword` | Recuperar contraseña (solo interfaz, no hay endpoint) |
+| `/dashboard` | `Dashboard` | Resumen, gráficas, deudas restantes y próximas a vencer |
+| `/add-debt` | `AddDebt` | Formulario de deuda |
+| `/add-income` | `AddIncome` | Formulario de ingreso |
+| `/add-payment` | `AddPayment` | Formulario de pago con recibo |
+| `/history` | `History` | Tablas filtrables con edición, eliminación y visor de recibos |
+| `/change-password` | `ChangePassword` | Cambiar contraseña (solo interfaz, no hay endpoint) |
 
----
+Todas las rutas excepto login, registro y recuperar contraseña están protegidas por `PrivateRoute`: si no hay `user` en `localStorage`, redirige a `/`.
 
-## Notas
+El Dashboard y el Historial recargan los datos cada 5 segundos.
 
-- El frontend está preparado para consumir la API REST del backend PayVue.
-- Si cambias la URL del backend, actualízala en los archivos donde se hacen peticiones con axios.
-- Para producción, genera el build y sirve los archivos estáticos desde tu servidor preferido.
+## Cómo se comunica con la API
 
----
+Todas las llamadas pasan por la instancia `api` de [src/config/api.js](src/config/api.js):
 
-## Créditos
+1. Al hacer login, se guarda `{ user_id, email }` en `localStorage` con la clave `user`.
+2. Un interceptor de axios añade el header `X-User-ID` a cada petición.
+3. "Cerrar sesión" borra esa clave de `localStorage`.
 
-Desarrollado por [Tu Nombre o Equipo].
+No se usan tokens. Las limitaciones que esto implica están descritas en el [README del backend](../backend/README.md#identificación-del-usuario).
 
----
+## Estructura
+
+```
+src/
+├── App.js               # Rutas y PrivateRoute
+├── index.js / index.css # Entrada y estilos globales
+├── config/
+│   ├── api.js           # Instancia axios, interceptor X-User-ID, helpers de usuario
+│   └── mockApi.js       # Datos de ejemplo para el modo mock
+├── components/
+│   ├── Sidebar.js       # Menú lateral
+│   ├── ProfilePanel.js  # Panel lateral de perfil
+│   └── Toast.js         # Notificaciones
+├── pages/               # Una página por ruta (ver tabla)
+└── utils/alert.js       # Alertas con SweetAlert2
+```
+
+## Build y despliegue
+
+```bash
+npm run build      # genera build/
+```
+
+- **Docker:** el [Dockerfile](Dockerfile) compila con Node 18 y sirve `build/` con nginx ([nginx.conf](nginx.conf)) en el puerto 80. `docker-compose` lo publica en el 3000 y pasa `REACT_APP_API_URL` como argumento de build.
+- **Vercel:** [vercel.json](vercel.json) compila con `@vercel/static-build` y redirige todas las rutas a `index.html`. `REACT_APP_API_URL` se toma del secreto `@api_url`.
