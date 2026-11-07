@@ -1,0 +1,147 @@
+name: Backport
+
+on:
+  pull_request:
+    types: [closed]
+
+jobs:
+  backport:
+    name: Backport PR
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.merged == true
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Git
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+
+      - name: Check for backport labels
+        id: check_labels
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const labels = context.payload.pull_request.labels.map(l => l.name);
+            const backportLabels = labels.filter(l => l.startsWith('backport-'));
+            
+            if (backportLabels.length === 0) {
+              console.log('No backport labels found');
+              return;
+            }
+            
+            // Extraer rama objetivo del label
+            const targetBranches = backportLabels.map(l => l.replace('backport-', ''));
+            
+            console.log('Target branches:', targetBranches);
+            core.setOutput('branches', JSON.stringify(targetBranches));
+            core.setOutput('has_backport', 'true');
+
+      - name: Create backport
+        if: steps.check_labels.outputs.has_backport == 'true'
+        run: |
+          BRANCHES='${{ steps.check_labels.outputs.branches }}'
+          PR_NUMBER=${{ github.event.pull_request.number }}
+          PR_TITLE="${{ github.event.pull_request.title }}"
+          MERGE_COMMIT="${{ github.event.pull_request.merge_commit_sha }}"
+          
+          echo "Branches to backport: $BRANCHES"
+          
+          # Parsear JSON de ramas
+          for BRANCH in $(echo "$BRANCHES" | jq -r '.[]'); do
+            echo "Creating backport to $BRANCH"
+            
+            BACKPORT_BRANCH="backport/pr-${PR_NUMBER}-to-${BRANCH}"
+            
+            # Crear rama desde la rama objetivo
+            git fetch origin "${BRANCH}:${BRANCH}" || {
+              echo "❌ Branch $BRANCH does not exist"
+              continue
+            }
+            
+            git checkout "${BRANCH}"
+            git checkout -b "${BACKPORT_BRANCH}"
+            
+            # Cherry-pick el merge commit
+            if git cherry-pick -m 1 "${MERGE_COMMIT}"; then
+              echo "✅ Cherry-pick successful"
+              git push origin "${BACKPORT_BRANCH}"
+              
+              # Guardar info para crear PR
+              echo "${BRANCH}" >> /tmp/success_branches.txt
+            else
+              echo "❌ Cherry-pick failed for ${BRANCH}"
+              git cherry-pick --abort
+              echo "${BRANCH}" >> /tmp/failed_branches.txt
+            fi
+          done
+
+      - name: Create backport PRs
+        if: steps.check_labels.outputs.has_backport == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const prNumber = context.payload.pull_request.number;
+            const prTitle = context.payload.pull_request.title;
+            const prBody = context.payload.pull_request.body || '';
+            
+            // Leer ramas exitosas
+            let successBranches = [];
+            if (fs.existsSync('/tmp/success_branches.txt')) {
+              successBranches = fs.readFileSync('/tmp/success_branches.txt', 'utf8')
+                .trim().split('\n').filter(Boolean);
+            }
+            
+            // Crear PR para cada rama exitosa
+            for (const targetBranch of successBranches) {
+              const backportBranch = `backport/pr-${prNumber}-to-${targetBranch}`;
+              
+              const { data: pr } = await github.rest.pulls.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: `[Backport ${targetBranch}] ${prTitle}`,
+                head: backportBranch,
+                base: targetBranch,
+                body: `🤖 Backport automático de #${prNumber}
+            
+            ---
+            
+            ## Original PR
+            #${prNumber}
+            
+            ## Descripción Original
+            ${prBody}
+            
+            ---
+            
+            _Este PR fue creado automáticamente por el workflow de backport._`
+              });
+              
+              console.log(`✅ Created backport PR to ${targetBranch}:`, pr.html_url);
+            }
+            
+            // Comentar sobre ramas fallidas
+            let failedBranches = [];
+            if (fs.existsSync('/tmp/failed_branches.txt')) {
+              failedBranches = fs.readFileSync('/tmp/failed_branches.txt', 'utf8')
+                .trim().split('\n').filter(Boolean);
+            }
+            
+            if (failedBranches.length > 0) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body: `⚠️ **Backport automático falló para algunas ramas**
+            
+            Las siguientes ramas tienen conflictos: ${failedBranches.join(', ')}
+            
+            Debes hacer el backport manualmente para estas ramas.`
+              });
+            }

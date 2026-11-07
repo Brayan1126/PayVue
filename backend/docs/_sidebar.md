@@ -1,0 +1,16 @@
+- [Inicio](/)
+- **Documentación Técnica**
+  - [Arquitectura del Software](/ARQUITECTURA.md)
+  - [Patrones de Diseño](/PATRONES_DISENO.md)
+  - [Principios SOLID](/PRINCIPIOS_SOLID.md)
+  - [Pruebas de Software](/PRUEBAS_SOFTWARE.md)
+  - [Proceso de Despliegue](/DESPLIEGUE.md)
+- **Diagramas UML**
+  - [Diagrama de alto nivel](/uml/alto_nivel.md)
+  - [Arquitectura técnica (CQRS)](/uml/arquitectura_cqrs.md)
+  - [Casos de uso](/uml/casos_uso.md)
+  - [Diagrama de secuencia](/uml/secuencia.md)
+  - [Diagrama de clases](/uml/clases.md)
+  - [Diagrama de componentes](/uml/componentes.md)
+  - [Diagrama de despliegue](/uml/despliegue.md)
+  - [Modelo de base de datos](/uml/modelo_bd.md)

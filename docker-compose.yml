@@ -1,0 +1,49 @@
+version: '3.8'
+
+services:
+  # Backend API
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: payvue-api
+    environment:
+      - PORT=8080
+      - DATABASE_PATH=/app/data/payvue.db
+      - ENVIRONMENT=development
+    ports:
+      - "8080:8080"
+    volumes:
+      # Bind mounts dentro de backend para persistencia
+      - ./backend/data:/app/data
+      - ./backend/uploads:/app/uploads
+    restart: unless-stopped
+    networks:
+      - payvue-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Frontend React
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        - REACT_APP_API_URL=http://localhost:8080
+    container_name: payvue-frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - payvue-network
+
+networks:
+  payvue-network:
+    driver: bridge

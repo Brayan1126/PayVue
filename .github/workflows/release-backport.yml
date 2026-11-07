@@ -1,0 +1,116 @@
+name: Release Backport
+
+on:
+  pull_request:
+    types: [closed]
+    branches:
+      - main
+
+jobs:
+  auto-backport:
+    name: Auto Backport a Develop
+    runs-on: ubuntu-latest
+    # Solo si el PR fue merged y tiene label "release"
+    if: |
+      github.event.pull_request.merged == true &&
+      contains(github.event.pull_request.labels.*.name, 'release')
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Git
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+
+      - name: Create backport branch
+        id: backport
+        run: |
+          # PR que se acaba de mergear
+          PR_NUMBER=${{ github.event.pull_request.number }}
+          PR_TITLE="${{ github.event.pull_request.title }}"
+          
+          # Nombre de la rama de backport
+          BACKPORT_BRANCH="backport/release-${PR_NUMBER}-to-develop"
+          
+          # Crear rama desde develop
+          git fetch origin develop:develop
+          git checkout develop
+          git checkout -b "${BACKPORT_BRANCH}"
+          
+          # Cherry-pick el merge commit
+          MERGE_COMMIT="${{ github.event.pull_request.merge_commit_sha }}"
+          
+          if git cherry-pick -m 1 "${MERGE_COMMIT}"; then
+            echo "✅ Cherry-pick exitoso"
+            echo "success=true" >> $GITHUB_OUTPUT
+            echo "branch=${BACKPORT_BRANCH}" >> $GITHUB_OUTPUT
+          else
+            echo "❌ Conflictos detectados"
+            git cherry-pick --abort
+            echo "success=false" >> $GITHUB_OUTPUT
+            echo "has_conflicts=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Push backport branch
+        if: steps.backport.outputs.success == 'true'
+        run: |
+          git push origin ${{ steps.backport.outputs.branch }}
+
+      - name: Create backport PR
+        if: steps.backport.outputs.success == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: pr } = await github.rest.pulls.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: '[Backport] ${{ github.event.pull_request.title }}',
+              head: '${{ steps.backport.outputs.branch }}',
+              base: 'develop',
+              body: `🤖 Backport automático de #${{ github.event.pull_request.number }}
+              
+              ---
+              
+              ## Original PR
+              #${{ github.event.pull_request.number }}
+              
+              ## Descripción Original
+              ${{ github.event.pull_request.body }}
+              
+              ---
+              
+              _Este PR fue creado automáticamente por el workflow de backport._`
+            });
+            
+            console.log('✅ Backport PR creado:', pr.html_url);
+
+      - name: Comment on conflicts
+        if: steps.backport.outputs.has_conflicts == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: ${{ github.event.pull_request.number }},
+              body: `⚠️ **Backport automático falló**
+              
+              El backport a \`develop\` tiene conflictos que deben resolverse manualmente.
+              
+              Para hacer el backport manualmente:
+              \`\`\`bash
+              git checkout develop
+              git checkout -b backport-${{ github.event.pull_request.number }}
+              git cherry-pick -m 1 ${{ github.event.pull_request.merge_commit_sha }}
+              # Resolver conflictos
+              git push origin backport-${{ github.event.pull_request.number }}
+              \`\`\`
+              
+              Luego crea un PR manualmente desde la rama \`backport-${{ github.event.pull_request.number }}\` hacia \`develop\`.`
+            });
+
